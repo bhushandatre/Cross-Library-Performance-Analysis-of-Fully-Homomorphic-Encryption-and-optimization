@@ -1,0 +1,137 @@
+import Pyfhel
+import numpy as np
+import time
+import csv
+from datetime import datetime
+import os
+
+class CipherPlusPlainExperiment:
+    def __init__(self):
+        self.results = []
+        self.experiment_name = "Cipher_Plus_Plain_Experiment"
+        
+    def get_modulus_chains(self):
+        return {
+            1024: [30, 20, 20, 30],
+            2048: [40, 30, 30, 40],
+            4096: [50, 30, 30, 30, 50],
+            8192: [60, 40, 40, 40, 60],
+            16384: [60, 40, 40, 40, 40, 60],
+            32768: [60, 40, 40, 40, 40, 40, 60]
+        }
+    
+    def generate_context(self, poly_degree, qi_sizes):
+        HE = Pyfhel.Pyfhel()
+        
+        if poly_degree == 1024: t = 65537
+        elif poly_degree == 2048: t = 65537
+        elif poly_degree == 4096: t = 65537
+        elif poly_degree == 8192: t = 65537
+        elif poly_degree == 16384: t = 132120577
+        elif poly_degree == 32768: t = 265420801
+        else: t = 65537
+            
+        HE.contextGen(scheme='bfv', n=poly_degree, t=t, sec=128, qi_sizes=qi_sizes)
+        HE.keyGen()
+        return HE, t
+    
+    def test_cipher_plus_plain_operations(self, HE, initial_arr, poly_degree):
+        try:
+            ptxt = HE.encodeInt(initial_arr)
+            ctxt = HE.encryptPtxt(ptxt)
+            operation_count = 0
+            
+            # SAFETY CAP: Addition operations can run for thousands
+            max_allowed_operations = 16384
+            
+            while operation_count < max_allowed_operations:
+                ctxt = ctxt + ptxt
+                operation_count += 1
+                
+                # Verify we can still decrypt correctly
+                result = HE.decryptInt(ctxt)
+                expected = (initial_arr * (operation_count + 1)) % HE.t
+                if not np.array_equal(result[:len(initial_arr)], expected[:len(initial_arr)]):
+                    print(f"      Result mismatch after {operation_count} operations")
+                    break
+                    
+            # If we hit the cap, note it
+            if operation_count >= max_allowed_operations:
+                print(f"      Hit safety cap at {operation_count} operations")
+                    
+            return operation_count
+            
+        except Exception as e:
+            print(f"      Failed after {operation_count} operations: {e}")
+            return operation_count
+    
+    def run_experiment(self):
+        poly_modulus_degrees = [1024, 2048, 4096, 8192, 16384, 32768]
+        modulus_chains = self.get_modulus_chains()
+        
+        print(f"Starting Experiment: {self.experiment_name}")
+        print("Testing MAXIMUM CIPHERTEXT + PLAINTEXT OPERATIONS")
+        print("SAFETY CAP: 1000 operations maximum")
+        print("=" * 80)
+        
+        for poly_degree in poly_modulus_degrees:
+            print(f"\nTesting with polynomial modulus degree: {poly_degree}")
+            qi_sizes = modulus_chains[poly_degree]
+            total_modulus_bits = sum(qi_sizes)
+            
+            print(f"  Modulus chain: {qi_sizes}")
+            print(f"  Total modulus bits: {total_modulus_bits}")
+            
+            try:
+                HE, t = self.generate_context(poly_degree, qi_sizes)
+                vector_size = min(16, poly_degree)
+                initial_arr = np.array([2] * vector_size, dtype=np.int64)
+                max_operations = self.test_cipher_plus_plain_operations(HE, initial_arr, poly_degree)
+                
+                result_row = {
+                    'poly_degree': poly_degree, 'total_modulus_bits': total_modulus_bits,
+                    'modulus_chain': str(qi_sizes), 'max_operations': max_operations,
+                    'plaintext_modulus': t, 'operation_type': 'cipher_plus_plain',
+                    'safety_cap_hit': max_operations >= 1000
+                }
+                self.results.append(result_row)
+                print(f"  Maximum CT+PT operations: {max_operations}")
+                del HE
+                
+            except Exception as e:
+                print(f"  ERROR: {e}")
+                result_row = {
+                    'poly_degree': poly_degree, 'total_modulus_bits': total_modulus_bits,
+                    'modulus_chain': str(qi_sizes), 'max_operations': 0,
+                    'plaintext_modulus': 0, 'operation_type': 'cipher_plus_plain', 
+                    'error': str(e), 'safety_cap_hit': False
+                }
+                self.results.append(result_row)
+        
+        self.save_results_to_csv()
+        
+    def save_results_to_csv(self):
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename = f"{self.experiment_name}_{timestamp}.csv"
+        os.makedirs("experiment_results", exist_ok=True)
+        filepath = os.path.join("experiment_results", filename)
+        
+        fieldnames = ['poly_degree', 'total_modulus_bits', 'modulus_chain', 'max_operations', 
+                     'plaintext_modulus', 'operation_type', 'error', 'safety_cap_hit']
+        
+        with open(filepath, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for result in self.results:
+                row = {field: result.get(field, '') for field in fieldnames}
+                writer.writerow(row)
+        
+        print(f"\nResults saved to: {filepath}")
+
+def main_cipher_plus_plain():
+    experiment = CipherPlusPlainExperiment()
+    experiment.run_experiment()
+    print("Cipher + Plain Experiment completed!")
+
+if __name__ == "__main__":
+    main_cipher_plus_plain()
